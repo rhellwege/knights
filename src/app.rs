@@ -4,7 +4,12 @@ use std::io::Write;
 
 impl From<crate::common::Color> for egui::Color32 {
     fn from(value: crate::common::Color) -> Self {
-        todo!()
+        let rgba = value.as_u32();
+        let r = ((rgba >> 24) & 0xff) as u8;
+        let g = ((rgba >> 16) & 0xff) as u8;
+        let b = ((rgba >> 8) & 0xff) as u8;
+        let a = (rgba & 0xff) as u8;
+        egui::Color32::from_rgba_unmultiplied(r, g, b, a)
     }
 }
 
@@ -277,7 +282,7 @@ where
                     painter.circle_filled(
                         square_rect.center(),
                         square_size * 0.35,
-                        egui::Color32::RED,
+                        self.simulation.get_color(x, y).unwrap(), // get_color will always return Some if value is some
                     );
                 }
             }

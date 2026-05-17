@@ -13,7 +13,7 @@ use crate::{common::Color, mapper::CenterSpiralMapper};
 
 fn main() -> std::io::Result<()> {
     let mapper = CenterSpiralMapper::new(7, false);
-    let piece = Knight::new(Color::from_u32(0x00ff0000));
+    let piece = Knight::new(Color::from_u32(0xffff00ff));
     let tour = GreedyKnightsTour::new(piece, mapper);
 
     // Switch between TerminalApp and EguiApp here
