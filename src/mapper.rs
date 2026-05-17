@@ -1,7 +1,9 @@
-/// Trait for mapping between 1D index and 2D coordinates on an N×N grid.
+// mapper.rs
+
+/// Trait for mapping between 1D index and 2D coordinates on a grid.
 pub trait OneToTwoMapper {
-    /// Grid size (N).
-    fn size(&self) -> u32;
+    /// Grid dimensions (width, height).
+    fn dimensions(&self) -> (u32, u32);
 
     /// Convert 1D index `d` to (x,y). Returns None if `d` is out of range.
     fn d2xy(&self, d: u64) -> Option<(u32, u32)>;
@@ -11,11 +13,12 @@ pub trait OneToTwoMapper {
 }
 
 //
-// Hilbert mapper
+// Hilbert mapper (square grid: N=2^order)
+// Reference: https://en.wikipedia.org/wiki/Hilbert_curve
 //
 pub struct HilbertMapper {
     order: u32,
-    n: u32,
+    n: u32, // width == height == n
     max_index: u64,
 }
 
@@ -32,39 +35,46 @@ impl HilbertMapper {
     }
 }
 
+/// standard Hilbert d -> (x,y) from "A. Hamilton, J. Skilling" style algorithms
+fn rot(n: u32, x: &mut u32, y: &mut u32, rx: u32, ry: u32) {
+    if ry == 0 {
+        if rx == 1 {
+            *x = n - 1 - *x;
+            *y = n - 1 - *y;
+        }
+        // swap
+        let t = *x;
+        *x = *y;
+        *y = t;
+    }
+}
+
 impl OneToTwoMapper for HilbertMapper {
-    fn size(&self) -> u32 {
-        self.n
+    fn dimensions(&self) -> (u32, u32) {
+        (self.n, self.n)
     }
 
-    fn d2xy(&self, mut d: u64) -> Option<(u32, u32)> {
+    fn d2xy(&self, d: u64) -> Option<(u32, u32)> {
         if d > self.max_index {
             return None;
         }
 
         let mut x: u32 = 0;
         let mut y: u32 = 0;
-        let mut s: u32 = 1;
+        let mut t = d;
+        let mut s = 1u32;
 
         while s < self.n {
-            let t_mod4 = (d & 3) as u32;
-            let rx = (t_mod4 >> 1) & 1;
-            let ry = (t_mod4 ^ rx) & 1;
+            // Determine quadrant: rx/ry are bits representing the 4 sub-squares
+            let rx = 1 & (t / 2) as u32;
+            let ry = 1 & (t as u32 ^ rx);
 
-            if ry == 0 {
-                if rx == 1 {
-                    x = s - 1 - x;
-                    y = s - 1 - y;
-                }
-                let tmp = x;
-                x = y;
-                y = tmp;
-            }
+            // Rotate and flip quadrants based on standard Hilbert curve rules
+            rot(s, &mut x, &mut y, rx, ry);
 
-            x = x.wrapping_add(s.wrapping_mul(rx));
-            y = y.wrapping_add(s.wrapping_mul(ry));
-
-            d >>= 2;
+            x += s * rx;
+            y += s * ry;
+            t >>= 2; // Process next 2 bits for the next scale
             s <<= 1;
         }
 
@@ -80,24 +90,20 @@ impl OneToTwoMapper for HilbertMapper {
         let mut xi = x as u32;
         let mut yi = y as u32;
         let mut d: u64 = 0;
-        let mut s = self.n >> 1;
+        let mut s = self.n / 2;
 
         while s > 0 {
+            // Identify which quadrant (x, y) falls into at the current scale
             let rx = ((xi & s) > 0) as u32;
             let ry = ((yi & s) > 0) as u32;
-            let pair = ((rx as u64) << 1) | (ry as u64);
-            d = (d << 2) | pair;
 
-            if ry == 0 {
-                if rx == 1 {
-                    xi = (self.n - 1) - xi;
-                    yi = (self.n - 1) - yi;
-                }
-                let tmp = xi;
-                xi = yi;
-                yi = tmp;
-            }
+            // Map (rx, ry) to the 0-3 index in the Hilbert sequence (using Gray code)
+            d += (s as u64) * (s as u64) * (((3 * rx) ^ ry) as u64);
 
+            // Clear current quadrant bits and rotate/flip for the next iteration
+            xi &= !s;
+            yi &= !s;
+            rot(s, &mut xi, &mut yi, rx, ry);
             s >>= 1;
         }
 
@@ -106,10 +112,10 @@ impl OneToTwoMapper for HilbertMapper {
 }
 
 //
-// Centered spiral mapper: grid size N must be odd. If even n provided, constructor makes it odd.
+// Centered spiral mapper (constructor enforces odd square size)
 //
 pub struct CenterSpiralMapper {
-    n: u32,         // grid size (odd)
+    n: u32,         // width == height == n (odd)
     max_index: u64, // n*n - 1
     clockwise: bool,
 }
@@ -119,9 +125,7 @@ impl CenterSpiralMapper {
         if n == 0 {
             n = 1;
         }
-        if n % 2 == 0 {
-            n += 1;
-        } // ensure odd
+        // Removed forced-odd constraint
         let max_index = (n as u64).saturating_mul(n as u64).saturating_sub(1);
         CenterSpiralMapper {
             n,
@@ -132,64 +136,62 @@ impl CenterSpiralMapper {
 }
 
 impl OneToTwoMapper for CenterSpiralMapper {
-    fn size(&self) -> u32 {
-        self.n
+    fn dimensions(&self) -> (u32, u32) {
+        (self.n, self.n)
     }
 
-    fn d2xy(&self, mut d: u64) -> Option<(u32, u32)> {
+    fn d2xy(&self, d: u64) -> Option<(u32, u32)> {
         if d > self.max_index {
             return None;
         }
+        // Center is (n-1)/2, n/2 to handle even dimensions (bottom-left of center 2x2)
+        let cx_eff = (self.n as i64 - 1) / 2;
+        let cy_eff = (self.n as i64) / 2;
 
-        let center = (self.n / 2) as i64;
         if d == 0 {
-            return Some((center as u32, center as u32));
+            return Some((cx_eff as u32, cy_eff as u32));
         }
 
-        let mut remaining = d.saturating_sub(1);
-        let mut layer: u64 = 1;
-        while remaining >= 8 * layer {
-            remaining -= 8 * layer;
-            layer += 1;
+        let mut rem = d - 1;
+        let mut r: i64 = 1;
+        while rem >= (8 * r as u64) {
+            rem -= 8 * r as u64;
+            r += 1;
         }
+        let side = 2 * r;
+        let mut x: i64;
+        let mut y: i64;
+        if self.clockwise {
+            x = cx_eff + r;
+            y = cy_eff + (r - 1);
+        } else {
+            x = cx_eff + r;
+            y = cy_eff - (r - 1);
+        }
+        let mut step = rem as i64;
 
-        let r = layer as i64;
-        let side_len = 2 * r;
-        let mut x = center + r;
-        let mut y = center + (r - 1);
-        let mut offset = remaining as i64;
-
-        let mut step = |dx: i64, dy: i64, steps: i64, off: &mut i64, x: &mut i64, y: &mut i64| {
-            let take = if *off < steps { *off } else { steps };
-            *x += dx * take;
-            *y += dy * take;
-            *off -= take;
+        let take = |dx: i64, dy: i64, s_len: i64, steps: &mut i64, x: &mut i64, y: &mut i64| {
+            let t = if *steps < s_len { *steps } else { s_len };
+            *x += dx * t;
+            *y += dy * t;
+            *steps -= t;
         };
 
         if self.clockwise {
-            step(0, -1, side_len, &mut offset, &mut x, &mut y);
-            if offset > 0 {
-                step(-1, 0, side_len, &mut offset, &mut x, &mut y);
-            }
-            if offset > 0 {
-                step(0, 1, side_len, &mut offset, &mut x, &mut y);
-            }
-            if offset > 0 {
-                step(1, 0, side_len, &mut offset, &mut x, &mut y);
-            }
+            take(0, -1, side - 1, &mut step, &mut x, &mut y); // up
+            take(-1, 0, side, &mut step, &mut x, &mut y); // left
+            take(0, 1, side, &mut step, &mut x, &mut y); // down
+            take(1, 0, side, &mut step, &mut x, &mut y); // right
         } else {
-            step(0, -1, side_len, &mut offset, &mut x, &mut y);
-            if offset > 0 {
-                step(1, 0, side_len, &mut offset, &mut x, &mut y);
-            }
-            if offset > 0 {
-                step(0, 1, side_len, &mut offset, &mut x, &mut y);
-            }
-            if offset > 0 {
-                step(-1, 0, side_len, &mut offset, &mut x, &mut y);
-            }
+            take(0, 1, side - 1, &mut step, &mut x, &mut y); // down
+            take(-1, 0, side, &mut step, &mut x, &mut y); // left
+            take(0, -1, side, &mut step, &mut x, &mut y); // up
+            take(1, 0, side, &mut step, &mut x, &mut y); // right
         }
 
+        if x < 0 || x >= self.n as i64 || y < 0 || y >= self.n as i64 {
+            return None;
+        }
         Some((x as u32, y as u32))
     }
 
@@ -198,75 +200,45 @@ impl OneToTwoMapper for CenterSpiralMapper {
         if x_in < 0 || x_in > max || y_in < 0 || y_in > max {
             return None;
         }
-
-        let xi = x_in;
-        let yi = y_in;
-        let center = (self.n / 2) as i64;
-        let dx = xi - center;
-        let dy = yi - center;
-
+        let cx_eff = (self.n as i64 - 1) / 2;
+        let cy_eff = (self.n as i64) / 2;
+        let dx = x_in - cx_eff;
+        let dy = y_in - cy_eff;
         if dx == 0 && dy == 0 {
             return Some(0);
         }
 
         let layer = dx.abs().max(dy.abs()) as u64;
-        let mut d = 1u64 + 4 * layer * (layer - 1);
+        let before = 1u64 + 4 * (layer - 1) * layer;
         let r = layer as i64;
-        let side_len = 2 * r;
-        let mut offset: i64 = 0;
-        let cx = center + r;
-        let cy = center + (r - 1);
+        let offset: i64;
 
         if self.clockwise {
-            // edge 0: up from (cx,cy) -> (cx, cy - t), t in [0, side_len-1]
-            if xi == cx && yi <= cy && yi >= cy - (side_len - 1) {
-                offset = cy - yi;
+            if dx == r && dy < r && dy >= -r {
+                offset = (r - 1) - dy;
+            } else if dy == -r && dx < r && dx >= -r {
+                offset = (2 * r - 1) + (r - dx);
+            } else if dx == -r && dy > -r && dy <= r {
+                offset = (4 * r - 1) + (dy + r);
             } else {
-                // edge1: left from (cx, cy-side_len)
-                let ex1x = cx;
-                let ex1y = cy - side_len;
-                if yi == ex1y && xi <= ex1x && xi >= ex1x - (side_len - 1) {
-                    offset = side_len + (ex1x - xi);
-                } else {
-                    // edge2: down from (cx-side_len, cy-side_len)
-                    let ex2x = cx - side_len;
-                    let ex2y = cy - side_len;
-                    if xi == ex2x && yi >= ex2y && yi <= ex2y + (side_len - 1) {
-                        offset = 2 * side_len + (yi - ex2y);
-                    } else {
-                        // edge3: right
-                        offset = 3 * side_len + (xi - (cx - side_len));
-                    }
-                }
+                offset = (6 * r - 1) + (dx + r);
             }
         } else {
-            // counter-clockwise: up, right, down, left
-            if xi == cx && yi <= cy && yi >= cy - (side_len - 1) {
-                offset = cy - yi;
-            } else if yi == cy - side_len && xi >= cx && xi <= cx + (side_len - 1) {
-                // right edge
-                offset = side_len + (xi - cx);
-            } else if xi == cx + (side_len - 1)
-                && yi >= cy - side_len
-                && yi <= cy + 0 + (side_len - 1)
-            {
-                // down edge
-                offset = 2 * side_len + (yi - (cy - side_len));
+            if dx == r && dy > -r && dy <= r {
+                offset = dy + r - 1;
+            } else if dy == r && dx < r && dx >= -r {
+                offset = (2 * r - 1) + (r - dx);
+            } else if dx == -r && dy < r && dy >= -r {
+                offset = (4 * r - 1) + (r - dy);
             } else {
-                // left edge
-                offset = 3 * side_len + ((cx + side_len - 1) - xi);
+                offset = (6 * r - 1) + (dx + r);
             }
         }
 
-        let max_off = (8 * layer) as i64 - 1;
-        if offset < 0 {
-            offset = 0;
+        let d = before + (offset as u64);
+        if d > self.max_index {
+            return None;
         }
-        if offset > max_off {
-            offset = max_off;
-        }
-
-        d += offset as u64;
         Some(d)
     }
 }
@@ -276,9 +248,93 @@ mod tests {
     use super::*;
 
     #[test]
+    fn spiral_even_grid() {
+        let mapper = CenterSpiralMapper::new(4, true);
+        let (w, h) = mapper.dimensions();
+        let n2 = (w as u64) * (h as u64);
+
+        // Ensure every index in 0..15 maps to a unique, valid coordinate
+        // and that it roundtrips perfectly.
+        let mut seen = std::collections::HashSet::new();
+        for d in 0..n2 {
+            let (x, y) = mapper
+                .d2xy(d)
+                .expect("Should be within bounds for n^2 points");
+            assert!(
+                x < w && y < h,
+                "Coordinate ({}, {}) out of bounds for {}x{}",
+                x,
+                y,
+                w,
+                h
+            );
+            assert!(
+                seen.insert((x, y)),
+                "Duplicate coordinate ({}, {}) found for d={}",
+                x,
+                y,
+                d
+            );
+
+            let d2 = mapper.xy2d(x as i64, y as i64).unwrap();
+            assert_eq!(d, d2, "Roundtrip failed for d={}", d);
+        }
+    }
+
+    #[test]
+    fn hilbert_specific_points() {
+        // Order 1: 2x2 grid
+        // 0: (0,0), 1: (0,1), 2: (1,1), 3: (1,0)
+        let h1 = HilbertMapper::new(1);
+        assert_eq!(h1.d2xy(0).unwrap(), (0, 0));
+        assert_eq!(h1.d2xy(1).unwrap(), (0, 1));
+        assert_eq!(h1.d2xy(2).unwrap(), (1, 1));
+        assert_eq!(h1.d2xy(3).unwrap(), (1, 0));
+
+        // Order 2: 4x4 grid
+        let h2 = HilbertMapper::new(2);
+        assert_eq!(h2.d2xy(0).unwrap(), (0, 0));
+        assert_eq!(h2.d2xy(5).unwrap(), (0, 3));
+        assert_eq!(h2.d2xy(10).unwrap(), (3, 3));
+        assert_eq!(h2.d2xy(15).unwrap(), (3, 0));
+    }
+
+    #[test]
+    fn spiral_specific_points() {
+        // 3x3 spiral (clockwise)
+        // Center (0) is (1,1)
+        let s = CenterSpiralMapper::new(3, true);
+        assert_eq!(s.d2xy(0).unwrap(), (1, 1)); // Center
+        assert_eq!(s.d2xy(1).unwrap(), (2, 1)); // Start of Ring 1
+        assert_eq!(s.d2xy(2).unwrap(), (2, 0)); // Move Up
+        assert_eq!(s.d2xy(3).unwrap(), (1, 0)); // Move Left
+        assert_eq!(s.d2xy(4).unwrap(), (0, 0)); // Move Left
+        assert_eq!(s.d2xy(5).unwrap(), (0, 1)); // Move Down
+        assert_eq!(s.d2xy(6).unwrap(), (0, 2)); // Move Down
+        assert_eq!(s.d2xy(7).unwrap(), (1, 2)); // Move Right
+        assert_eq!(s.d2xy(8).unwrap(), (2, 2)); // Move Right
+    }
+
+    #[test]
+    fn spiral_ccw_specific_points() {
+        // 3x3 spiral (counter-clockwise)
+        // Center (0) is (1,1)
+        let s = CenterSpiralMapper::new(3, false);
+        assert_eq!(s.d2xy(0).unwrap(), (1, 1));
+        assert_eq!(s.d2xy(1).unwrap(), (2, 1)); // Start of Ring 1
+        assert_eq!(s.d2xy(2).unwrap(), (2, 2)); // Move Down
+        assert_eq!(s.d2xy(3).unwrap(), (1, 2)); // Move Left
+        assert_eq!(s.d2xy(4).unwrap(), (0, 2)); // Move Left
+        assert_eq!(s.d2xy(5).unwrap(), (0, 1)); // Move Up
+        assert_eq!(s.d2xy(6).unwrap(), (0, 0)); // Move Up
+        assert_eq!(s.d2xy(7).unwrap(), (1, 0)); // Move Right
+        assert_eq!(s.d2xy(8).unwrap(), (2, 0)); // Move Right
+    }
+    #[test]
     fn hilbert_roundtrip() {
         let mapper = HilbertMapper::new(3);
-        let n2 = (mapper.n as u64) * (mapper.n as u64);
+        let (w, h) = mapper.dimensions();
+        let n2 = (w as u64) * (h as u64);
         for d in 0..n2 {
             let (x, y) = mapper.d2xy(d).unwrap();
             let d2 = mapper.xy2d(x as i64, y as i64).unwrap();
@@ -289,8 +345,9 @@ mod tests {
     #[test]
     fn spiral_roundtrip_clockwise() {
         let mapper = CenterSpiralMapper::new(7, true);
-        let n2 = (mapper.n as u64) * (mapper.n as u64);
-        assert_eq!(mapper.d2xy(0).unwrap(), ((mapper.n / 2, mapper.n / 2)));
+        let (w, h) = mapper.dimensions();
+        let n2 = (w as u64) * (h as u64);
+        assert_eq!(mapper.d2xy(0).unwrap(), (w / 2, h / 2));
         for d in 0..n2 {
             let (x, y) = mapper.d2xy(d).unwrap();
             let d2 = mapper.xy2d(x as i64, y as i64).unwrap();
@@ -301,7 +358,8 @@ mod tests {
     #[test]
     fn spiral_roundtrip_counter() {
         let mapper = CenterSpiralMapper::new(7, false);
-        let n2 = (mapper.n as u64) * (mapper.n as u64);
+        let (w, h) = mapper.dimensions();
+        let n2 = (w as u64) * (h as u64);
         for d in 0..n2 {
             let (x, y) = mapper.d2xy(d).unwrap();
             let d2 = mapper.xy2d(x as i64, y as i64).unwrap();
