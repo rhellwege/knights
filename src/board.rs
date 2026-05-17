@@ -1,3 +1,4 @@
+use crate::common::Color;
 use crate::mapper::OneToTwoMapper;
 use crate::piece::Piece;
 
@@ -6,6 +7,9 @@ pub trait SimulationState {
     /// Advances the simulation by one step. Returns true if a step was taken.
     fn step(&mut self) -> bool;
 
+    /// Resets the simulation to its initial state.
+    fn reset(&mut self);
+
     /// Returns true if the simulation can no longer proceed.
     fn is_finished(&self) -> bool;
 
@@ -13,7 +17,10 @@ pub trait SimulationState {
     fn mapper_dimensions(&self) -> (u32, u32);
 
     /// Returns the value (visit order) at the given coordinate.
-    fn get_value(&self, x: u32, y: u32) -> u8;
+    fn get_value(&self, x: u32, y: u32) -> Option<u32>;
+
+    /// Returns the rgba value as a u32 at the given coordinate.
+    fn get_color(&self, x: u32, y: u32) -> Option<Color>;
 
     /// Returns the 1D mapping index (d) for the given coordinate.
     fn get_d(&self, x: u32, y: u32) -> Option<u64>;
@@ -30,9 +37,9 @@ where
 {
     piece: P,
     mapper: M,
-    state: Vec<u8>,
+    state: Vec<u32>,
     current_d: u64,
-    step_count: u8,
+    step_count: u32,
     is_finished: bool,
 }
 
@@ -75,17 +82,17 @@ where
         let candidates = self.piece.candidate_moves(x as i32, y as i32);
 
         // Find all valid moves and pick the one with the lowest d index (cost)
-        let mut best_move: Option<(u64, u8)> = None;
+        let mut best_move: Option<u64> = None;
 
         for (nx, ny) in candidates {
             if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
                 if let Some(nd) = self.mapper.xy2d(nx as i64, ny as i64) {
                     if self.state[nd as usize] == 0 {
                         match best_move {
-                            None => best_move = Some((nd, 0)),
-                            Some((best_d, _)) => {
+                            None => best_move = Some(nd),
+                            Some(best_d) => {
                                 if nd < best_d {
-                                    best_move = Some((nd, 0));
+                                    best_move = Some(nd);
                                 }
                             }
                         }
@@ -94,18 +101,34 @@ where
             }
         }
 
-        if let Some((nd, _)) = best_move {
+        if let Some(nd) = best_move {
             self.step_count = self.step_count.saturating_add(1);
             self.state[nd as usize] = self.step_count;
             self.current_d = nd;
-            if self.step_count == 255 {
+
+            // Check if board is full
+            if self.step_count as usize == self.state.len() {
                 self.is_finished = true;
             }
+
             true
         } else {
             self.is_finished = true;
             false
         }
+    }
+
+    fn reset(&mut self) {
+        // Clear board
+        for val in self.state.iter_mut() {
+            *val = 0;
+        }
+
+        // Reset to initial state
+        self.state[0] = 1;
+        self.current_d = 0;
+        self.step_count = 1;
+        self.is_finished = false;
     }
 
     fn is_finished(&self) -> bool {
@@ -116,12 +139,13 @@ where
         self.mapper.dimensions()
     }
 
-    fn get_value(&self, x: u32, y: u32) -> u8 {
-        if let Some(d) = self.get_d(x, y) {
-            self.state[d as usize]
-        } else {
-            0
-        }
+    fn get_value(&self, x: u32, y: u32) -> Option<u32> {
+        let v = self.state[self.get_d(x, y)? as usize];
+        if v == 0 { None } else { Some(v as u32 - 1) }
+    }
+
+    fn get_color(&self, x: u32, y: u32) -> Option<Color> {
+        self.get_value(x, y).map(|_| self.piece.color())
     }
 
     fn get_d(&self, x: u32, y: u32) -> Option<u64> {

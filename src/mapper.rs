@@ -111,6 +111,73 @@ impl OneToTwoMapper for HilbertMapper {
     }
 }
 
+/// A Hilbert mapper re-indexed to start from the center.
+/// d=0 is the center point.
+/// d=1,3,5... map to standard indices > center.
+/// d=2,4,6... map to standard indices < center.
+pub struct CenterHilbertMapper {
+    inner: HilbertMapper,
+    center_d_std: u64,
+}
+
+impl CenterHilbertMapper {
+    pub fn new(order: u32) -> Self {
+        let inner = HilbertMapper::new(order);
+        let (w, h) = inner.dimensions();
+        // Center for even grid (Hilbert is always 2^n)
+        let cx = (w - 1) / 2;
+        let cy = h / 2;
+        let center_d_std = inner.xy2d(cx as i64, cy as i64).unwrap_or(0);
+
+        CenterHilbertMapper {
+            inner,
+            center_d_std,
+        }
+    }
+
+    /// Remaps d_new to the standard Hilbert index d_std
+    fn to_std(&self, d: u64) -> u64 {
+        if d == 0 {
+            self.center_d_std
+        } else if d % 2 == 1 {
+            // Odd -> Standard indices > center (1->+1, 3->+2, 5->+3)
+            self.center_d_std + (d + 1) / 2
+        } else {
+            // Even -> Standard indices < center (2->-1, 4->-2, 6->-3)
+            self.center_d_std.saturating_sub(d / 2)
+        }
+    }
+
+    /// Remaps standard Hilbert index d_std to the new center-relative index d_new
+    fn from_std(&self, d_std: u64) -> u64 {
+        if d_std == self.center_d_std {
+            0
+        } else if d_std > self.center_d_std {
+            let diff = d_std - self.center_d_std;
+            2 * diff - 1
+        } else {
+            let diff = self.center_d_std - d_std;
+            2 * diff
+        }
+    }
+}
+
+impl OneToTwoMapper for CenterHilbertMapper {
+    fn dimensions(&self) -> (u32, u32) {
+        self.inner.dimensions()
+    }
+
+    fn d2xy(&self, d: u64) -> Option<(u32, u32)> {
+        let d_std = self.to_std(d);
+        self.inner.d2xy(d_std)
+    }
+
+    fn xy2d(&self, x: i64, y: i64) -> Option<u64> {
+        let d_std = self.inner.xy2d(x, y)?;
+        Some(self.from_std(d_std))
+    }
+}
+
 //
 // Centered spiral mapper (constructor enforces odd square size)
 //

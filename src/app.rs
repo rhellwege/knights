@@ -2,6 +2,12 @@ use crate::board::SimulationState;
 use eframe::egui;
 use std::io::Write;
 
+impl From<crate::common::Color> for egui::Color32 {
+    fn from(value: crate::common::Color) -> Self {
+        todo!()
+    }
+}
+
 /// A trait that combines interaction logic and visual rendering.
 pub trait SimulationApp {
     fn run<S>(&mut self, simulation: S) -> std::io::Result<()>
@@ -67,7 +73,7 @@ impl TerminalApp {
         let mut max_val = 0;
         for y in 0..h {
             for x in 0..w {
-                max_val = max_val.max(simulation.get_value(x, y));
+                max_val = max_val.max(simulation.get_value(x, y).unwrap_or(0));
             }
         }
         let width_padding = if max_val > 99 {
@@ -81,11 +87,13 @@ impl TerminalApp {
         for y in 0..h {
             let mut line = String::new();
             for x in 0..w {
-                let val = simulation.get_value(x, y);
-                if val == 0 {
-                    line.push_str(&format!("{:>width$} ", ".", width = width_padding));
-                } else {
-                    line.push_str(&format!("{:>width$} ", val, width = width_padding));
+                match simulation.get_value(x, y) {
+                    Some(val) => {
+                        line.push_str(&format!("{:>width$} ", val, width = width_padding));
+                    }
+                    None => {
+                        line.push_str(&format!("{:>width$} ", ".", width = width_padding));
+                    }
                 }
             }
             write!(writer, "{}\r\n", line)?;
@@ -185,6 +193,14 @@ where
             ui.heading("Knight's Tour Simulation");
             ui.horizontal(|ui| {
                 ui.label("Press SPACE to step.");
+                if ui.button("Complete").clicked() {
+                    while !self.simulation.is_finished() {
+                        self.simulation.step();
+                    }
+                }
+                if ui.button("Reset").clicked() {
+                    self.simulation.reset();
+                }
                 ui.checkbox(&mut self.show_trail, "Show Trail");
             });
 
@@ -234,8 +250,8 @@ where
                 );
 
                 // Draw visit order index (step) in the center
-                let val = self.simulation.get_value(x, y);
-                if val > 0 {
+                let value = self.simulation.get_value(x, y);
+                if let Some(val) = value {
                     let text_color = if is_dark {
                         egui::Color32::WHITE
                     } else {
@@ -257,7 +273,7 @@ where
                     false
                 };
 
-                if is_knight || (self.show_trail && val > 0) {
+                if is_knight || (self.show_trail && value.is_some()) {
                     painter.circle_filled(
                         square_rect.center(),
                         square_size * 0.35,

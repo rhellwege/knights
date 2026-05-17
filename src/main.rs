@@ -1,20 +1,19 @@
 mod app;
 mod board;
+mod common;
 mod mapper;
 mod piece;
 
-use app::{EguiApp, SimulationApp, TerminalApp};
-use board::{GreedyKnightsTour, SimulationState};
-use mapper::CenterSpiralMapper;
+use app::{EguiApp, SimulationApp};
+use board::GreedyKnightsTour;
+use mapper::CenterHilbertMapper;
 use piece::Knight;
 
-use crate::mapper::HilbertMapper;
+use crate::{common::Color, mapper::CenterSpiralMapper};
 
 fn main() -> std::io::Result<()> {
-    let n = 4;
-    // let mapper = CenterSpiralMapper::new(n, true);
-    let mapper = HilbertMapper::new(n);
-    let piece = Knight;
+    let mapper = CenterSpiralMapper::new(7, false);
+    let piece = Knight::new(Color::from_u32(0x00ff0000));
     let tour = GreedyKnightsTour::new(piece, mapper);
 
     // Switch between TerminalApp and EguiApp here

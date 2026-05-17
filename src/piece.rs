@@ -1,7 +1,11 @@
+use crate::common::Color;
 /// Trait for pieces with static movement patterns.
 pub trait Piece {
     /// Returns the name of the piece.
     fn name(&self) -> &str;
+
+    /// Returns the color of the piece instance
+    fn color(&self) -> Color;
 
     /// Returns the relative (dx, dy) offsets this piece can move.
     fn move_offsets(&self) -> &[(i32, i32)];
@@ -16,11 +20,23 @@ pub trait Piece {
     }
 }
 
-pub struct Knight;
+pub struct Knight {
+    color: Color,
+}
+
+impl Knight {
+    pub fn new(color: Color) -> Self {
+        Self { color }
+    }
+}
 
 impl Piece for Knight {
     fn name(&self) -> &str {
         "Knight"
+    }
+
+    fn color(&self) -> Color {
+        self.color
     }
 
     fn move_offsets(&self) -> &[(i32, i32)] {
@@ -44,7 +60,7 @@ mod tests {
 
     #[test]
     fn knight_moves() {
-        let knight = Knight;
+        let knight = Knight::new(Color::from_u32(0));
         let moves = knight.candidate_moves(0, 0);
         assert_eq!(moves.len(), 8);
         assert!(moves.contains(&(1, 2)));
