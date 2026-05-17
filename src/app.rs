@@ -1,24 +1,20 @@
-use crate::board::BoardState;
-use crate::mapper::OneToTwoMapper;
-use crate::piece::Piece;
+use crate::board::SimulationState;
 use eframe::egui;
 use std::io::Write;
 
 /// A trait that combines interaction logic and visual rendering.
 pub trait SimulationApp {
-    fn run<P, M>(&mut self, board: BoardState<P, M>) -> std::io::Result<()>
+    fn run<S>(&mut self, simulation: S) -> std::io::Result<()>
     where
-        P: Piece + 'static,
-        M: OneToTwoMapper + 'static;
+        S: SimulationState + 'static;
 }
 
 pub struct TerminalApp;
 
 impl SimulationApp for TerminalApp {
-    fn run<P, M>(&mut self, mut board: BoardState<P, M>) -> std::io::Result<()>
+    fn run<S>(&mut self, mut simulation: S) -> std::io::Result<()>
     where
-        P: Piece + 'static,
-        M: OneToTwoMapper + 'static,
+        S: SimulationState + 'static,
     {
         use std::io::{stdin, stdout};
         use termion::event::Key;
@@ -27,7 +23,7 @@ impl SimulationApp for TerminalApp {
 
         let stdin = stdin();
         let mut stdout = stdout().into_raw_mode()?;
-        let (w, h) = board.mapper_dimensions();
+        let (w, h) = simulation.mapper_dimensions();
 
         write!(
             stdout,
@@ -38,14 +34,14 @@ impl SimulationApp for TerminalApp {
             h
         )?;
 
-        self.render(&board, &mut stdout)?;
+        self.render(&simulation, &mut stdout)?;
 
         for c in stdin.keys() {
             match c.unwrap() {
                 Key::Char(' ') => {
-                    if !board.is_finished() {
-                        board.step();
-                        self.render(&board, &mut stdout)?;
+                    if !simulation.is_finished() {
+                        simulation.step();
+                        self.render(&simulation, &mut stdout)?;
                     }
                 }
                 Key::Char('q') | Key::Esc => break,
@@ -61,22 +57,17 @@ impl SimulationApp for TerminalApp {
 }
 
 impl TerminalApp {
-    fn render<P, M, W: Write>(
-        &self,
-        board: &BoardState<P, M>,
-        writer: &mut W,
-    ) -> std::io::Result<()>
+    fn render<S, W: Write>(&self, simulation: &S, writer: &mut W) -> std::io::Result<()>
     where
-        P: Piece,
-        M: OneToTwoMapper,
+        S: SimulationState,
     {
         write!(writer, "{}", termion::cursor::Goto(1, 2))?;
-        let (w, h) = board.mapper_dimensions();
+        let (w, h) = simulation.mapper_dimensions();
 
         let mut max_val = 0;
         for y in 0..h {
             for x in 0..w {
-                max_val = max_val.max(board.get_value(x, y));
+                max_val = max_val.max(simulation.get_value(x, y));
             }
         }
         let width_padding = if max_val > 99 {
@@ -90,7 +81,7 @@ impl TerminalApp {
         for y in 0..h {
             let mut line = String::new();
             for x in 0..w {
-                let val = board.get_value(x, y);
+                let val = simulation.get_value(x, y);
                 if val == 0 {
                     line.push_str(&format!("{:>width$} ", ".", width = width_padding));
                 } else {
@@ -106,54 +97,54 @@ impl TerminalApp {
 pub struct EguiApp;
 
 impl SimulationApp for EguiApp {
-    fn run<P, M>(&mut self, board: BoardState<P, M>) -> std::io::Result<()>
+    fn run<S>(&mut self, simulation: S) -> std::io::Result<()>
     where
-        P: Piece + 'static,
-        M: OneToTwoMapper + 'static,
+        S: SimulationState + 'static,
     {
         let options = eframe::NativeOptions::default();
         eframe::run_native(
             "Knight's Tour",
             options,
-            Box::new(|_cc| Ok(Box::new(EguiSimulator::new(board)))),
+            Box::new(|_cc| Ok(Box::new(EguiSimulator::new(simulation)))),
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
     }
 }
 
-struct EguiSimulator<P, M>
+struct EguiSimulator<S>
 where
-    P: Piece,
-    M: OneToTwoMapper,
+    S: SimulationState,
 {
-    board: BoardState<P, M>,
+    simulation: S,
     /// Cache for d-values (mapping labels)
     d_mapping_cache: Vec<u64>,
     /// Cache for square rectangles to avoid recalculating coordinate math every frame.
     cached_square_rects: Vec<egui::Rect>,
     /// The bounding rect used to generate the current cache.
     cached_grid_rect: egui::Rect,
+    /// Whether to show the trail of moves
+    show_trail: bool,
 }
 
-impl<P, M> EguiSimulator<P, M>
+impl<S> EguiSimulator<S>
 where
-    P: Piece,
-    M: OneToTwoMapper,
+    S: SimulationState,
 {
-    fn new(board: BoardState<P, M>) -> Self {
-        let (w, h) = board.mapper_dimensions();
+    fn new(simulation: S) -> Self {
+        let (w, h) = simulation.mapper_dimensions();
         let mut d_mapping_cache = Vec::with_capacity((w * h) as usize);
         for y in 0..h {
             for x in 0..w {
-                d_mapping_cache.push(board.get_d(x, y).unwrap_or(0));
+                d_mapping_cache.push(simulation.get_d(x, y).unwrap_or(0));
             }
         }
 
         Self {
-            board,
+            simulation,
             d_mapping_cache,
             cached_square_rects: Vec::new(),
             cached_grid_rect: egui::Rect::NOTHING,
+            show_trail: false,
         }
     }
 
@@ -163,7 +154,7 @@ where
             return;
         }
 
-        let (w, h) = self.board.mapper_dimensions();
+        let (w, h) = self.simulation.mapper_dimensions();
         let square_size = rect.width() / w as f32;
         self.cached_square_rects.clear();
 
@@ -180,23 +171,25 @@ where
     }
 }
 
-impl<P, M> eframe::App for EguiSimulator<P, M>
+impl<S> eframe::App for EguiSimulator<S>
 where
-    P: Piece,
-    M: OneToTwoMapper,
+    S: SimulationState,
 {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Handle input
+        // Handle input (Ui derefs to Context in 0.34)
         if ui.input(|i| i.key_pressed(egui::Key::Space)) {
-            self.board.step();
+            self.simulation.step();
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.heading("Knight's Tour Simulation");
-            ui.label("Press SPACE to step.");
+            ui.horizontal(|ui| {
+                ui.label("Press SPACE to step.");
+                ui.checkbox(&mut self.show_trail, "Show Trail");
+            });
 
-            let (w, h) = self.board.mapper_dimensions();
-            let current_pos = self.board.current_pos();
+            let (w, h) = self.simulation.mapper_dimensions();
+            let current_pos = self.simulation.current_pos();
 
             // Reserve space for the board
             let available_size = ui.available_size();
@@ -241,7 +234,7 @@ where
                 );
 
                 // Draw visit order index (step) in the center
-                let val = self.board.get_value(x, y);
+                let val = self.simulation.get_value(x, y);
                 if val > 0 {
                     let text_color = if is_dark {
                         egui::Color32::WHITE
@@ -257,19 +250,23 @@ where
                     );
                 }
 
-                // Draw the knight if this is the current position
-                if let Some((cx, cy)) = current_pos {
-                    if cx == x && cy == y {
-                        painter.circle_filled(
-                            square_rect.center(),
-                            square_size * 0.35,
-                            egui::Color32::RED,
-                        );
-                    }
+                // Draw the knight or trail
+                let is_knight = if let Some((cx, cy)) = current_pos {
+                    cx == x && cy == y
+                } else {
+                    false
+                };
+
+                if is_knight || (self.show_trail && val > 0) {
+                    painter.circle_filled(
+                        square_rect.center(),
+                        square_size * 0.35,
+                        egui::Color32::RED,
+                    );
                 }
             }
 
-            if self.board.is_finished() {
+            if self.simulation.is_finished() {
                 ui.label("Simulation Finished!");
             }
         });
