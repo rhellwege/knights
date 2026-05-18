@@ -9,12 +9,24 @@ use board::GreedyKnightsTour;
 use mapper::CenterHilbertMapper;
 use piece::Knight;
 
-use crate::{common::Color, mapper::CenterSpiralMapper};
+use crate::{
+    board::DuelingKnights,
+    common::Color,
+    mapper::{CenterSpiralMapper, HilbertMapper},
+    piece::Piece,
+};
 
 fn main() -> std::io::Result<()> {
-    let mapper = CenterSpiralMapper::new(7, false);
-    let piece = Knight::new(Color::from_u32(0xffff00ff));
-    let tour = GreedyKnightsTour::new(piece, mapper);
+    let mapper = CenterSpiralMapper::new(333, false);
+    // let mapper = HilbertMapper::new(5);
+    // let piece = Knight::new(Color::from_u32(0x00ff00ff));
+    let pieces: Vec<Box<dyn Piece>> = vec![
+        Box::new(Knight::new(Color::from_u32(0x000000ff))),
+        Box::new(Knight::new(Color::from_u32(0xff0000ff))),
+        Box::new(Knight::new(Color::from_u32(0x00ff00ff))),
+    ];
+
+    let tour = DuelingKnights::new(pieces, mapper);
 
     // Switch between TerminalApp and EguiApp here
     let mut app = EguiApp;

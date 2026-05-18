@@ -2,8 +2,14 @@
 
 /// Trait for mapping between 1D index and 2D coordinates on a grid.
 pub trait OneToTwoMapper {
+    fn name(&self) -> &'static str;
     /// Grid dimensions (width, height).
     fn dimensions(&self) -> (u32, u32);
+
+    fn in_bounds(&self, nx: i32, ny: i32) -> bool {
+        let (w, h) = self.dimensions();
+        nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32
+    }
 
     /// Convert 1D index `d` to (x,y). Returns None if `d` is out of range.
     fn d2xy(&self, d: u64) -> Option<(u32, u32)>;
@@ -50,6 +56,10 @@ fn rot(n: u32, x: &mut u32, y: &mut u32, rx: u32, ry: u32) {
 }
 
 impl OneToTwoMapper for HilbertMapper {
+    fn name(&self) -> &'static str {
+        "HilbertMapper"
+    }
+
     fn dimensions(&self) -> (u32, u32) {
         (self.n, self.n)
     }
@@ -163,6 +173,10 @@ impl CenterHilbertMapper {
 }
 
 impl OneToTwoMapper for CenterHilbertMapper {
+    fn name(&self) -> &'static str {
+        "CenterHilbertMapper"
+    }
+
     fn dimensions(&self) -> (u32, u32) {
         self.inner.dimensions()
     }
@@ -203,6 +217,10 @@ impl CenterSpiralMapper {
 }
 
 impl OneToTwoMapper for CenterSpiralMapper {
+    fn name(&self) -> &'static str {
+        "CenterSpiralMapper"
+    }
+
     fn dimensions(&self) -> (u32, u32) {
         (self.n, self.n)
     }
