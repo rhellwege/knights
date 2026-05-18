@@ -13,6 +13,17 @@ impl From<crate::common::Color> for egui::Color32 {
     }
 }
 
+impl From<crate::common::Color> for image::Rgba<u8> {
+    fn from(value: crate::common::Color) -> Self {
+        let rgba = value.as_u32();
+        let r = ((rgba >> 24) & 0xff) as u8;
+        let g = ((rgba >> 16) & 0xff) as u8;
+        let b = ((rgba >> 8) & 0xff) as u8;
+        let a = (rgba & 0xff) as u8;
+        image::Rgba([r, g, b, a])
+    }
+}
+
 /// A trait that combines interaction logic and visual rendering.
 pub trait SimulationApp {
     fn run<S>(&mut self, simulation: S) -> std::io::Result<()>
@@ -291,5 +302,46 @@ where
                 ui.label("Simulation Finished!");
             }
         });
+    }
+}
+
+pub struct PngApp {
+    pub output_path: String,
+}
+
+impl PngApp {
+    pub fn new(output_path: String) -> Self {
+        Self { output_path }
+    }
+}
+
+impl SimulationApp for PngApp {
+    fn run<S>(&mut self, mut simulation: S) -> std::io::Result<()>
+    where
+        S: SimulationState + 'static,
+    {
+        use image::{ImageBuffer, Rgba};
+
+        println!("Exhaustively solving simulation...");
+        while !simulation.is_finished() {
+            simulation.step();
+        }
+
+        let (w, h) = simulation.mapper_dimensions();
+        let mut img = ImageBuffer::new(w, h);
+
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            if let Some(color) = simulation.get_color(x, y) {
+                *pixel = color.into();
+            } else {
+                *pixel = Rgba([255, 255, 255, 255]); // White for unvisited
+            }
+        }
+
+        img.save(&self.output_path)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        println!("Image saved to {}", self.output_path);
+        Ok(())
     }
 }
